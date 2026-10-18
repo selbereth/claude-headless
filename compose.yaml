@@ -1,0 +1,30 @@
+# Example stack. Set TTYD_CREDENTIAL=user:password in .env (or your stack's env vars).
+services:
+  # Remote Control server: many concurrent sessions, driven from claude.ai/code or the app.
+  claude:
+    image: ghcr.io/selbereth/claude-headless:latest
+    container_name: claude-headless
+    restart: unless-stopped
+    # Server mode expects a terminal; give it a pseudo-TTY nobody needs to attach to.
+    tty: true
+    stdin_open: true
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/home:/home/node
+      - ${WORKSPACE:-./workspace}:/workspace
+
+  # Browser terminal (full TUI) for first-time login and the commands Remote Control
+  # can't run remotely. Same image, home and workspace as the server.
+  terminal:
+    image: ghcr.io/selbereth/claude-headless:latest
+    container_name: claude-headless-terminal
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${TERMINAL_PORT:-7681}:7681"
+    command: ["ttyd", "-W", "-p", "7681", "-c", "${TTYD_CREDENTIAL:?set TTYD_CREDENTIAL}", "tmux", "new", "-A", "-s", "main"]
+    volumes:
+      - ./data/home:/home/node
+      - ${WORKSPACE:-./workspace}:/workspace

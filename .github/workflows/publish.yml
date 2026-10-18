@@ -1,0 +1,64 @@
+name: Publish image
+
+# Builds on every push to main, and daily picks up new Claude Code releases:
+# the scheduled run only builds when ghcr has no image for the latest version yet.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve latest Claude Code version
+        id: version
+        run: echo "claude=$(npm view @anthropic-ai/claude-code version)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if this version is already published
+        id: check
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${{ steps.version.outputs.claude }}"
+          if [ "${{ github.event_name }}" = "schedule" ] && docker manifest inspect "$image" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$image already exists"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.check.outputs.skip != 'true'
+
+      - uses: docker/metadata-action@v5
+        if: steps.check.outputs.skip != 'true'
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.claude }}
+            type=sha,format=short
+
+      - uses: docker/build-push-action@v6
+        if: steps.check.outputs.skip != 'true'
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: CLAUDE_CODE_VERSION=${{ steps.version.outputs.claude }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
