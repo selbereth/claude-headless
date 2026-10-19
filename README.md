@@ -33,7 +33,8 @@ Then open claude.ai/code or the Claude app → **Code** → session **unraid**.
 
 ## Notes
 
-- Runs as the unprivileged `node` user (uid 1000). The workspace must be readable/writable by uid 1000.
+- Runs as the unprivileged `node` user. Set `PUID`/`PGID` to the owner of your folders
+  (default `1000:1000`; Unraid is usually `1000:100`). The workspace must be readable/writable by that user.
 - Permission prompts and questions are forwarded to your phone and wait for an answer. Turn on
   "Push when actions required" in `/config` to be notified.
 - ttyd is plain HTTP with basic auth. Keep it on your LAN or behind Tailscale/Cloudflare Access.
