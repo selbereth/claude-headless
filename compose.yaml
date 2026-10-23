@@ -26,9 +26,11 @@ services:
       TZ: ${TZ:-UTC}
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
+      TTYD_CREDENTIAL: ${TTYD_CREDENTIAL:?set TTYD_CREDENTIAL}
     ports:
       - "${TERMINAL_PORT:-7681}:7681"
-    command: ["ttyd", "-W", "-p", "7681", "-c", "${TTYD_CREDENTIAL:?set TTYD_CREDENTIAL}", "tmux", "new", "-A", "-s", "main"]
+    # login-proxy.js serves a web sign-in form and proxies to ttyd on loopback.
+    command: ["node", "/usr/local/bin/login-proxy.js", "tmux", "new", "-A", "-s", "main"]
     volumes:
       - ./data/home:/home/node
       - ${WORKSPACE:-./workspace}:/workspace

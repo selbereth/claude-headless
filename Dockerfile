@@ -27,11 +27,29 @@ RUN arch="$(uname -m)" \
 ARG CLAUDE_CODE_VERSION=2.1.302
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
+# GitHub CLI from the official apt repo. Its login lives in ~/.config/gh, which is on the
+# home volume, so `gh auth login` survives container restarts and image updates.
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && gh --version
+
+# Tools you install yourself (no root in the container) go on the home volume so they
+# survive restarts: `npm i -g <pkg>` -> ~/.npm-global, static binaries -> ~/.local/bin.
+# Set after the Claude Code install above, which stays in the image.
 ENV TERM=xterm-256color \
-    LANG=C.UTF-8
+    LANG=C.UTF-8 \
+    NPM_CONFIG_PREFIX=/home/node/.npm-global \
+    PATH=/home/node/.local/bin:/home/node/.npm-global/bin:$PATH
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Web login form in front of ttyd (used by the terminal service).
+COPY login-proxy.js /usr/local/bin/login-proxy.js
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

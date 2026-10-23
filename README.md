@@ -15,7 +15,7 @@ The stack has two containers built from the same image, sharing the same home an
 | Container | What it does | Ports |
 |---|---|---|
 | `claude-headless` | Runs `claude remote-control`. This is what your phone/browser talks to. | none (outbound only) |
-| `claude-headless-terminal` | A password-protected browser terminal (ttyd + tmux) with the full Claude Code TUI. Used for the one-time login and a few commands Remote Control can't do. | `7681` |
+| `claude-headless-terminal` | A browser terminal (ttyd + tmux) behind a web sign-in page with the full Claude Code TUI. Used for the one-time login and a few commands Remote Control can't do. | `7681` |
 
 Image: `ghcr.io/selbereth/claude-headless` (public, linux/amd64). Tags: `latest`, the Claude Code
 version (e.g. `2.1.303`) and the git sha. A daily build publishes new Claude Code releases automatically.
@@ -84,9 +84,10 @@ On Unraid that is usually `1000` / `100`.
          TZ: America/Los_Angeles
          PUID: 1000
          PGID: 100
+         TTYD_CREDENTIAL: ${TTYD_CREDENTIAL}
        ports:
          - "7681:7681"
-       command: ["ttyd", "-W", "-p", "7681", "-c", "${TTYD_CREDENTIAL}", "tmux", "new", "-A", "-s", "main"]
+       command: ["node", "/usr/local/bin/login-proxy.js", "tmux", "new", "-A", "-s", "main"]
        volumes:
          - /mnt/user/appdata/claude-headless/home:/home/node
          - /mnt/user/projects:/workspace
@@ -94,7 +95,8 @@ On Unraid that is usually `1000` / `100`.
 
 3. Below the editor, under **Environment variables**, click **Add an environment variable**:
    - name: `TTYD_CREDENTIAL`
-   - value: `username:password` (one colon, no quotes, no spaces) — this is the login for the browser terminal
+   - value: `username:password` (one colon, no quotes, no spaces) — this is the login for the browser terminal.
+     Changing it signs everyone out.
 4. **Deploy the stack**.
 
 The `claude-headless` container will keep restarting with *"You must be logged in to use Remote
@@ -116,11 +118,13 @@ then `docker compose up -d`. The home folder is `./data/home`.
 
 ### 3. Sign in (once)
 
-1. Open `http://<server-ip>:7681` and log in with your `TTYD_CREDENTIAL`.
+1. Open `http://<server-ip>:7681` and sign in with the username and password from `TTYD_CREDENTIAL`
+   (password managers can fill the form; the session lasts 30 days, `/logout` signs out).
 2. Run `claude`, then `/login`, and sign in with your claude.ai account (open the link it shows on any
    device, approve, paste the code back).
-3. Accept the **trust this folder** prompt for `/workspace`, then `/exit`.
-4. Run `claude remote-control`, answer `y` to *Enable Remote Control?*, then press **Ctrl+C**.
+3. The **trust this folder** prompt for `/workspace` is pre-accepted by the container
+   (set `TRUST_WORKSPACE=0` to answer it yourself).
+4. Run `/remote-control` and accept *Enable Remote Control?*, then `/exit`.
 5. Restart the `claude-headless` container.
 
 The login is stored in the home folder, so this survives updates and rebuilds.
@@ -140,13 +144,23 @@ when Claude is waiting on a question or permission.
 | `TTYD_CREDENTIAL` | terminal | — (required) | `username:password` for the browser terminal |
 | `PUID` / `PGID` | both | `1000` / `1000` | User/group Claude runs as. Match the owner of your workspace. |
 | `TZ` | both | `UTC` | Timezone |
+| `TRUST_WORKSPACE` | both | `1` | Pre-accept the folder trust prompt for `/workspace`. `0` to keep the prompt. |
 
 To rename the session from **unraid**, override the `claude` service's command:
 `command: ["claude", "remote-control", "--name", "my-server"]`.
 
-Need more tools inside the container (Go, Rust, .NET…)? Build your own image `FROM
-ghcr.io/selbereth/claude-headless` and `apt-get install` them. The image already has git, ssh,
-curl, ripgrep, jq, python3 and Node 22. Put SSH keys for git in `<home>/.ssh/`.
+## Tools and GitHub login
+
+`gh` is included. Run `gh auth login` and `gh auth setup-git` once in the terminal; the login is stored in
+the home folder (`~/.config/gh`) and survives restarts. SSH keys for git go in `<home>/.ssh/`.
+
+Only `/home/node` and `/workspace` persist; everything else resets when the container is recreated. Install
+tools you add yourself into their own folder in home (`~/.local/share/<tool>/`, binary symlinked into
+`~/.local/bin`; config in `~/.config/<tool>/`). `npm i -g` goes to `~/.npm-global`. Both bin dirs are on `PATH`.
+
+Need tools that require root (Go, Rust, .NET…)? Build your own image `FROM
+ghcr.io/selbereth/claude-headless` and `apt-get install` them. The image already has git, gh, ssh,
+curl, ripgrep, jq, python3 and Node 22.
 
 ## Updating
 
@@ -158,15 +172,15 @@ Your login and settings are kept.
 | Symptom | Fix |
 |---|---|
 | `claude-headless` loops with *"You must be logged in to use Remote Control"* | Do [Sign in](#3-sign-in-once). If you already did, check both containers mount the **same** home folder. |
-| Terminal container loops with *"ttyd: invalid credential, format: username:password"* | `TTYD_CREDENTIAL` is missing or has no colon. Add it under the stack's Environment variables and **Update the stack**. |
+| Terminal container loops with *"TTYD_CREDENTIAL must be set as user:password"* | `TTYD_CREDENTIAL` is missing or has no colon. Add it under the stack's Environment variables and **Update the stack**. |
 | Claude gets *permission denied* writing files | `PUID`/`PGID` don't match the workspace owner. Check with `ls -ln`. |
 | Session doesn't appear in the app | Make sure step 3.4 was done, then restart `claude-headless` and check its logs. |
 | Session drops after network loss | Remote Control exits after ~10 minutes offline; the restart policy brings it back. |
 
 ## Security
 
-- The browser terminal is **plain HTTP with basic auth**. Keep port 7681 on your LAN or behind
-  Tailscale / Cloudflare Access. Never port-forward it.
+- The browser terminal is **plain HTTP** with a sign-in form, a signed session cookie and a per-IP lockout
+  after repeated wrong passwords. Keep port 7681 on your LAN or behind Tailscale / Cloudflare Access. Never port-forward it.
 - Claude can read and change everything in `/workspace`, including other projects' `.env` files.
 - Claude runs as an unprivileged user, not root.
 

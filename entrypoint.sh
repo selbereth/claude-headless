@@ -32,4 +32,20 @@ if [ -d /home/node/.ssh ]; then
   find /home/node/.ssh -type f ! -name '*.pub' -exec chmod 600 {} \;
 fi
 
+# Pre-accept the workspace trust prompt (stored per folder in ~/.claude.json),
+# so server mode doesn't need the one-off interactive `claude` run.
+# Set TRUST_WORKSPACE=0 to keep the prompt.
+if [ "${TRUST_WORKSPACE:-1}" != "0" ]; then
+  setpriv --reuid=node --regid="$PGID" --init-groups env HOME=/home/node node -e '
+    const fs = require("fs"), f = "/home/node/.claude.json";
+    let c = {};
+    try { c = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { if (e.code !== "ENOENT") process.exit(0); }
+    c.projects ??= {};
+    c.projects["/workspace"] ??= {};
+    if (c.projects["/workspace"].hasTrustDialogAccepted) process.exit(0);
+    c.projects["/workspace"].hasTrustDialogAccepted = true;
+    fs.writeFileSync(f, JSON.stringify(c, null, 2), { mode: 0o600 });
+  '
+fi
+
 exec setpriv --reuid=node --regid="$PGID" --init-groups env HOME=/home/node "$@"
