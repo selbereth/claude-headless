@@ -173,7 +173,9 @@ server.on("upgrade", (req, socket, head) => {
 
 const cmd = process.argv.slice(2);
 if (!cmd.length) cmd.push("tmux", "new", "-A", "-s", "main");
-const ttyd = spawn("ttyd", ["-W", "-i", "127.0.0.1", "-p", String(TTYD_PORT), ...cmd], { stdio: "inherit" });
+// tmux mouse mode swallows drag-selection; Shift-drag (Option-drag on macOS) bypasses it.
+const ttydOpts = ["-t", "macOptionClickForcesSelection=true"];
+const ttyd = spawn("ttyd", ["-W", "-i", "127.0.0.1", "-p", String(TTYD_PORT), ...ttydOpts, ...cmd], { stdio: "inherit" });
 ttyd.on("exit", (code) => process.exit(code ?? 1));
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => ttyd.kill(sig));
 
