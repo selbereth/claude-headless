@@ -104,6 +104,30 @@ function html(res, status, body, headers = {}) {
   res.end(body);
 }
 
+
+// ttyd 1.7.7's xterm.js has no OSC 52 handler, so copies from Claude Code / tmux ("set-clipboard on")
+// never reach the browser clipboard. Register one on window.term.
+const CLIPBOARD_SHIM = `<script>(function(){
+function legacyCopy(t){var a=document.createElement("textarea");a.value=t;a.style.cssText="position:fixed;top:0;left:0;opacity:0";document.body.appendChild(a);a.select();var ok=false;try{ok=document.execCommand("copy")}catch(e){}a.remove();try{window.term&&window.term.focus()}catch(e){}return ok}
+var pending=null;
+function copy(t){
+  var f=function(){if(!legacyCopy(t))pending=t};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).catch(f)}else{f()}
+}
+["mouseup","keydown","pointerdown"].forEach(function(ev){document.addEventListener(ev,function(){if(pending&&legacyCopy(pending))pending=null},true)});
+var n=0,iv=setInterval(function(){
+  if(window.term&&window.term.parser){
+    clearInterval(iv);
+    window.term.parser.registerOscHandler(52,function(d){
+      var i=d.indexOf(";");var b=d.slice(i+1);
+      if(!b||b==="?")return true;
+      try{var bin=atob(b),u=new Uint8Array(bin.length);for(var k=0;k<bin.length;k++)u[k]=bin.charCodeAt(k);copy(new TextDecoder().decode(u))}catch(e){}
+      return true;
+    });
+  }else if(++n>200)clearInterval(iv);
+},100);
+})()</script>`;
+
 const server = http.createServer((req, res) => {
   const ip = req.socket.remoteAddress;
   const url = new URL(req.url, "http://x");
@@ -137,11 +161,23 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
+  const isIndex = req.method === "GET" && url.pathname === "/";
+  const headers = isIndex ? { ...req.headers, "accept-encoding": "identity" } : req.headers;
   const up = http.request(
-    { host: "127.0.0.1", port: TTYD_PORT, method: req.method, path: req.url, headers: req.headers },
+    { host: "127.0.0.1", port: TTYD_PORT, method: req.method, path: req.url, headers },
     (r) => {
-      res.writeHead(r.statusCode, r.headers);
-      r.pipe(res);
+      if (!isIndex || !String(r.headers["content-type"] || "").includes("text/html")) {
+        res.writeHead(r.statusCode, r.headers);
+        return r.pipe(res);
+      }
+      const chunks = [];
+      r.on("data", (c) => chunks.push(c));
+      r.on("end", () => {
+        const body = Buffer.from(Buffer.concat(chunks).toString().replace("</head>", CLIPBOARD_SHIM + "</head>"));
+        const h = { ...r.headers, "content-length": body.length };
+        res.writeHead(r.statusCode, h);
+        res.end(body);
+      });
     }
   );
   up.on("error", () => html(res, 502, "ttyd is not reachable"));
